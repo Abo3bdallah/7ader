@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>إحصاء الرحلة - مباشر</title>
+    <title>لجنة احصاء الباحة</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
     <style>
@@ -26,7 +26,7 @@
 
     <div id="app" class="max-w-md mx-auto bg-white min-h-screen shadow-2xl relative pb-20 flex flex-col">
         <header class="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-10">
-            <h1 class="text-xl font-bold text-center">📋 نظام إحصاء الرحلة</h1>
+            <h1 class="text-xl font-bold text-center">📋 لجنة احصاء الباحة</h1>
         </header>
 
         <main id="main-content" class="flex-1 p-4 overflow-y-auto">
@@ -67,14 +67,35 @@
         </div>
     </div>
 
+    <!-- نافذة إدارة المحضرين الجديدة -->
+    <div id="supervisors-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md transform transition-all flex flex-col max-h-[80vh]">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-black text-gray-900">إدارة المحضرين</h3>
+                <button onclick="closeSupervisorsModal()" class="text-gray-400 hover:text-red-500 font-bold text-2xl">&times;</button>
+            </div>
+            
+            <div class="flex space-x-2 space-x-reverse mb-4">
+                <input type="text" id="new-supervisor-input" class="flex-1 p-3 rounded-lg border font-bold text-sm bg-gray-50 focus:bg-white" placeholder="اسم المحضر الجديد...">
+                <button onclick="addNewSupervisor()" class="bg-blue-600 text-white px-5 py-2 rounded-lg font-bold text-sm shadow">إضافة</button>
+            </div>
+
+            <div class="overflow-y-auto flex-1 border rounded-xl p-2 bg-gray-50 space-y-2 min-h-[150px]" id="supervisors-list-container">
+                <!-- سيتم حقن قائمة المحضرين هنا -->
+            </div>
+        </div>
+    </div>
+
+    <div id="offline-indicator" class="fixed top-0 left-0 w-full bg-red-500 text-white text-xs font-bold text-center py-1 hidden z-50 shadow-md">
+        ⚠️ لا يوجد اتصال بالإنترنت. سيتم حفظ التغييرات ومزامنتها لاحقاً.
+    </div>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, onSnapshot, setDoc, doc, addDoc, deleteDoc, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, onSnapshot, setDoc, doc, addDoc, deleteDoc, enableIndexedDbPersistence, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // ==========================================
-        // ⚠️ إعدادات Firebase الخاصة بك (تم التحديث)
-        // ==========================================
+        // Your web app's Firebase configuration
         const firebaseConfig = {
             apiKey: "AIzaSyCSVQoUbC_3gdjfJ-cQt0zgHCVEENmd2tk",
             authDomain: "dor-8d904.firebaseapp.com",
@@ -83,10 +104,10 @@
             messagingSenderId: "1052547052694",
             appId: "1:1052547052694:web:5e43af00f902b91cd07eb7"
         };
-        // ==========================================
 
         let app, auth, db, user;
         let participants = [];
+        let supervisors = []; 
         let currentTab = 'attendance';
         let allLogs = []; 
         let allSessions = []; 
@@ -96,28 +117,34 @@
 
         async function initApp() {
             try {
-                if (firebaseConfig.apiKey === "YOUR_API_KEY") {
-                    document.getElementById('main-content').innerHTML = `
-                        <div class="p-6 mt-10 bg-red-50 text-red-700 text-center rounded-xl border border-red-200 max-w-sm mx-auto">
-                            <svg class="w-12 h-12 mx-auto mb-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                            <h2 class="font-bold text-lg mb-2">تنبيه هام!</h2>
-                            <p class="text-sm">لم تقم بإدخال إعدادات Firebase الخاصة بك بعد.</p>
-                            <p class="text-xs mt-2 opacity-80">يرجى تعديل الكود ووضع مفاتيح مشروعك ليعمل التطبيق.</p>
-                        </div>`;
-                    return;
-                }
-
                 app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
 
-                // الدخول كمجهول للسهولة (Anonymous)
+                // تفعيل ميزة العمل بدون إنترنت
+                try {
+                    await enableIndexedDbPersistence(db);
+                    console.log("Offline persistence enabled");
+                } catch (err) {
+                    if (err.code == 'failed-precondition') {
+                        console.warn("Offline persistence failed: Multiple tabs open.");
+                    } else if (err.code == 'unimplemented') {
+                        console.warn("Offline persistence not supported by browser.");
+                    }
+                }
+
+                // مراقبة حالة الإنترنت
+                window.addEventListener('online', updateNetworkStatus);
+                window.addEventListener('offline', updateNetworkStatus);
+                updateNetworkStatus();
+
                 await signInAnonymously(auth);
                 user = auth.currentUser;
 
                 if (user) {
                     startRealtimeListener(); 
                     startStudentsListener(); 
+                    startSupervisorsListener(); 
                 }
             } catch (error) {
                 console.error("Error initializing app:", error);
@@ -125,8 +152,16 @@
             }
         }
 
+        function updateNetworkStatus() {
+            const indicator = document.getElementById('offline-indicator');
+            if (navigator.onLine) {
+                indicator.classList.add('hidden');
+            } else {
+                indicator.classList.remove('hidden');
+            }
+        }
+
         function startRealtimeListener() {
-            // استخدام مسارات مباشرة في قاعدة البيانات الخاصة بك
             const sessionsCollection = collection(db, 'trip_sessions');
             onSnapshot(sessionsCollection, (snapshot) => {
                 allSessions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -153,6 +188,27 @@
             }, (error) => console.error("Students Error:", error));
         }
 
+        function startSupervisorsListener() {
+            const supervisorsCollection = collection(db, 'supervisors');
+            onSnapshot(supervisorsCollection, (snapshot) => {
+                supervisors = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                supervisors.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+                updateSupervisorSelect(); 
+                if (!document.getElementById('supervisors-modal').classList.contains('hidden')) {
+                    renderSupervisorsList(); 
+                }
+            }, (error) => console.error("Supervisors Error:", error));
+        }
+
+        function updateSupervisorSelect() {
+            const selectElement = document.getElementById('new-supervisor-name');
+            if (selectElement) {
+                const currentValue = selectElement.value;
+                selectElement.innerHTML = `<option value="" disabled ${!currentValue ? 'selected' : ''}>اختر اسم المحضر...</option>` +
+                    supervisors.map(sup => `<option value="${sup.name}" ${currentValue === sup.name ? 'selected' : ''}>${sup.name}</option>`).join('');
+            }
+        }
+
         window.showModal = function(title, message, confirmCallback, confirmText = 'تأكيد', isDanger = false) {
             document.getElementById('modal-title').innerText = title;
             document.getElementById('modal-message').innerText = message;
@@ -168,11 +224,60 @@
         window.closeModal = function() { document.getElementById('custom-modal').classList.add('hidden'); }
         window.showAlert = function(title, message) { showModal(title, message, () => {}, 'حسناً'); }
 
+        window.openSupervisorsModal = function() {
+            renderSupervisorsList();
+            document.getElementById('supervisors-modal').classList.remove('hidden');
+        }
+
+        window.closeSupervisorsModal = function() {
+            document.getElementById('supervisors-modal').classList.add('hidden');
+        }
+
+        window.addNewSupervisor = async function() {
+            if (!user) return;
+            const inputElement = document.getElementById('new-supervisor-input');
+            const name = inputElement.value.trim();
+            if (!name) { showAlert("تنبيه", "الرجاء إدخال اسم المحضر."); return; }
+            if (supervisors.some(s => s.name === name)) { showAlert("تنبيه", "هذا الاسم موجود مسبقاً."); return; }
+            
+            try {
+                await addDoc(collection(db, 'supervisors'), { name: name, createdAt: Date.now() });
+                inputElement.value = '';
+            } catch (error) { console.error("Add supervisor error:", error); }
+        }
+
+        window.deleteSupervisor = function(id, name) {
+            showModal("حذف محضر", `هل تريد حذف "${name}" من قائمة المحضرين؟`, async () => {
+                try { await deleteDoc(doc(db, 'supervisors', id)); } 
+                catch (error) { console.error("Delete supervisor error:", error); }
+            }, "حذف", true);
+        }
+
+        function renderSupervisorsList() {
+            const container = document.getElementById('supervisors-list-container');
+            if (supervisors.length === 0) {
+                container.innerHTML = '<p class="text-center text-gray-400 text-sm py-6 font-bold">لا يوجد محضرين مضافين</p>';
+                return;
+            }
+            let html = '';
+            supervisors.forEach(sup => {
+                html += `
+                    <div class="bg-white p-3 rounded-lg border shadow-sm flex justify-between items-center mb-2">
+                        <div class="font-bold text-sm text-gray-800">${sup.name}</div>
+                        <button onclick="deleteSupervisor('${sup.id}', '${sup.name}')" class="text-red-500 hover:bg-red-50 p-1.5 rounded-md transition-colors">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </div>`;
+            });
+            container.innerHTML = html;
+        }
+
         window.startNewSession = async function() {
             const eventName = document.getElementById('new-event-name').value.trim();
-            const supervisor = document.getElementById('new-supervisor-name').value.trim();
+            const supervisorSelect = document.getElementById('new-supervisor-name');
+            const supervisor = supervisorSelect ? supervisorSelect.value : '';
             if (!eventName || !supervisor) {
-                showAlert("تنبيه", "الرجاء إدخال اسم الفعالية واسم المسؤول.");
+                showAlert("تنبيه", "الرجاء إدخال اسم الفعالية واختيار اسم المسؤول.");
                 return;
             }
             try {
@@ -273,6 +378,27 @@
             }, "حذف", true);
         }
 
+        window.confirmDeleteSession = function(sessionId, eventName) {
+            showModal("حذف سجل تحضير", `هل أنت متأكد من حذف سجل "${eventName}" بالكامل؟\nسيتم مسح هذا السجل وإلغاء الخصومات (الغياب/التأخير) التي سُجلت فيه لجميع الطلاب. لا يمكن التراجع عن هذا الإجراء.`, async () => {
+                try {
+                    // 1. جلب وحذف جميع سجلات الطلاب المرتبطة بهذه الجلسة (لتنظيف الإحصائيات)
+                    const logsQuery = query(collection(db, 'trip_logs'), where('sessionId', '==', sessionId));
+                    const querySnapshot = await getDocs(logsQuery);
+                    const deletePromises = querySnapshot.docs.map(logDoc => deleteDoc(doc(db, 'trip_logs', logDoc.id)));
+                    await Promise.all(deletePromises);
+
+                    // 2. حذف الجلسة نفسها
+                    await deleteDoc(doc(db, 'trip_sessions', sessionId));
+                    
+                    if (viewingSessionId === sessionId) viewingSessionId = null;
+                    renderCurrentTab();
+                } catch (error) { 
+                    console.error("Delete session error:", error); 
+                    showAlert("خطأ", "حدث خطأ أثناء محاولة الحذف.");
+                }
+            }, "حذف نهائي", true);
+        }
+
         window.switchTab = function(tabName) {
             currentTab = tabName; viewingSessionId = null;
             ['attendance', 'tracking', 'logs', 'students'].forEach(t => {
@@ -281,8 +407,6 @@
             });
             renderCurrentTab();
         };
-
-        function formatTime(timestamp) { return new Date(timestamp).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }); }
 
         function renderCurrentTab() {
             const container = document.getElementById('main-content');
@@ -302,10 +426,22 @@
                         <h2 class="text-2xl font-black text-gray-800 mb-2">بدء تحضير جديد</h2>
                         <div class="space-y-5 text-right mt-8">
                             <div><label class="block text-sm font-bold mb-2">اسم الفعالية / البرنامج:</label>
-                            <input type="text" id="new-event-name" class="w-full p-4 rounded-xl border shadow-sm font-bold" placeholder="مثال: ركوب حافلة 1"></div>
-                            <div><label class="block text-sm font-bold mb-2">المسؤول:</label>
-                            <input type="text" id="new-supervisor-name" class="w-full p-4 rounded-xl border shadow-sm font-bold" placeholder="الاسم..."></div>
-                            <button onclick="startNewSession()" class="w-full bg-blue-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700">فتح القائمة وبدء التحضير</button>
+                            <input type="text" id="new-event-name" class="w-full p-4 rounded-xl border shadow-sm font-bold bg-gray-50 focus:bg-white transition-colors" placeholder="مثال: ركوب حافلة 1"></div>
+                            
+                            <div>
+                                <div class="flex justify-between items-end mb-2">
+                                    <label class="block text-sm font-bold">المسؤول (المُحضّر):</label>
+                                    <button onclick="openSupervisorsModal()" class="text-blue-700 text-xs font-bold bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-100 transition-colors shadow-sm flex items-center space-x-1 space-x-reverse">
+                                        <span>⚙️ إدارة المحضرين</span>
+                                    </button>
+                                </div>
+                                <select id="new-supervisor-name" class="w-full p-4 rounded-xl border shadow-sm font-bold bg-gray-50 focus:bg-white transition-colors appearance-none">
+                                    <option value="" disabled selected>اختر اسم المحضر...</option>
+                                    ${supervisors.map(sup => `<option value="${sup.name}">${sup.name}</option>`).join('')}
+                                </select>
+                            </div>
+
+                            <button onclick="startNewSession()" class="w-full bg-blue-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 transition-transform transform hover:scale-[1.02]">فتح القائمة وبدء التحضير</button>
                         </div>
                     </div>`;
             }
@@ -422,10 +558,15 @@
             sortedSessions.forEach(session => {
                 const isClosed = session.status === 'closed';
                 html += `
-                    <div onclick="viewSessionDetails('${session.id}')" class="bg-white p-4 rounded-xl border ${isClosed ? 'border-gray-200' : 'border-green-300'} shadow-sm cursor-pointer">
-                        <div class="flex items-center space-x-2 space-x-reverse mb-1.5"><h3 class="font-bold text-base">${session.eventName}</h3>
-                        ${isClosed ? `<span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-1 rounded font-bold">مغلق</span>` : `<span class="bg-green-100 text-green-700 text-[10px] px-2 py-1 rounded font-bold animate-pulse">مفتوح</span>`}</div>
-                        <p class="text-xs text-gray-500 font-medium">${session.supervisor} • ${new Date(session.createdAt).toLocaleDateString('ar-SA')}</p>
+                    <div class="bg-white p-4 rounded-xl border ${isClosed ? 'border-gray-200' : 'border-green-300'} shadow-sm flex justify-between items-center">
+                        <div onclick="viewSessionDetails('${session.id}')" class="flex-1 cursor-pointer">
+                            <div class="flex items-center space-x-2 space-x-reverse mb-1.5"><h3 class="font-bold text-base">${session.eventName}</h3>
+                            ${isClosed ? `<span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-1 rounded font-bold">مغلق</span>` : `<span class="bg-green-100 text-green-700 text-[10px] px-2 py-1 rounded font-bold animate-pulse">مفتوح</span>`}</div>
+                            <p class="text-xs text-gray-500 font-medium">${session.supervisor} • ${new Date(session.createdAt).toLocaleDateString('ar-SA')}</p>
+                        </div>
+                        <button onclick="confirmDeleteSession('${session.id}', '${session.eventName}')" class="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors ml-1" title="حذف السجل">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
                     </div>`;
             });
             return html + `</div>`;
